@@ -6,78 +6,38 @@ import numpy as np
 
 # Create the main window
 root = tk.Tk()
-root.title("Image Upload, Skew Correction, and Display")
+root.title("Image Upload and Display")
 
-# Function to detect and correct skew in an image
-def correct_skew(image_path):
-    # Read the image using OpenCV
-    img = cv2.imread(image_path, 0)  # Load in grayscale
-    # Apply thresholding to make the image binary
-    _, binary_img = cv2.threshold(img, 128, 255, cv2.THRESH_BINARY_INV)
+# Function for Otsu Binarization
+def otsu_binarization(image):
+    # Convert the image to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    # Find the coordinates of non-zero pixels (text pixels)
-    coords = np.column_stack(np.where(binary_img > 0))
+    # Apply Otsu's thresholding
+    _, otsu_img = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     
-    # Calculate the angle of skew using the Hough transform method
-    angle = cv2.minAreaRect(coords)[-1]
-    
-    # Adjust the angle range (OpenCV returns angles in [-90, 0), we need [0, 90])
-    if angle < -45:
-        angle = -(90 + angle)
-    else:
-        angle = -angle
-    
-    # Get the image dimensions (height, width)
-    (h, w) = img.shape
-    
-    # Calculate the rotation matrix
-    center = (w // 2, h // 2)
-    matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
-    
-    # Rotate the image to correct skew
-    rotated_image = cv2.warpAffine(img, matrix, (w, h), flags=cv2.INTER_CUBIC, borderMode=cv2.BORDER_REPLICATE)
-    
-    # Convert the corrected image to RGB format
-    rotated_image_rgb = cv2.cvtColor(rotated_image, cv2.COLOR_GRAY2RGB)
-    
-    return rotated_image_rgb
+    return otsu_img
 
 # Function to open file dialog and upload an image
 def upload_image():
     file_path = filedialog.askopenfilename(title="Select an Image", filetypes=[("Image files", "*.jpg;*.jpeg;*.png;*.bmp;*.gif")])
     if file_path:
-        # Correct the skew of the uploaded image
-        corrected_image = correct_skew(file_path)
+        # Open the image using OpenCV
+        img = cv2.imread(file_path)
         
-        # Convert the corrected image to a format that tkinter can display
-        img_pil = Image.fromarray(corrected_image)
+        # Apply Otsu binarization
+        otsu_img = otsu_binarization(img)
         
-        # Check if the image is horizontally oriented and rotate to vertical if necessary
-        if img_pil.width > img_pil.height:
-            img_pil = img_pil.rotate(90, expand=True)
+        # Convert the image to PIL format for display in tkinter
+        otsu_img_pil = Image.fromarray(otsu_img)
         
-        # Resize the image by adjusting the width while maintaining the aspect ratio
-        aspect_ratio = img_pil.height / img_pil.width
-        new_width = 1080
-        new_height = int(aspect_ratio * new_width)
-        img_pil = img_pil.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        # Resize the image to fit in the label
+        otsu_img_pil.thumbnail((400, 400))
         
-        # If the height exceeds 1080, we need to resize the height to 1080 while adjusting the width proportionally
-        if new_height > 1080:
-            aspect_ratio = img_pil.width / img_pil.height
-            new_height = 1080
-            new_width = int(aspect_ratio * new_height)
-            img_pil = img_pil.resize((new_width, new_height), Image.Resampling.LANCZOS)
+        # Convert the image to a format that tkinter can display
+        img_tk = ImageTk.PhotoImage(otsu_img_pil)
         
-        # Add padding if the image is smaller than 1080x1080 (to prevent cropping)
-        width, height = img_pil.size
-        new_image = Image.new("RGB", (1080, 1080), (255, 255, 255))  # White background
-        new_image.paste(img_pil, ((1080 - width) // 2, (1080 - height) // 2))
-        
-        # Convert the final image to a format suitable for tkinter display
-        img_tk = ImageTk.PhotoImage(new_image)
-        
-        # Display the corrected and resized image
+        # Display the image
         label.config(image=img_tk)
         label.image = img_tk  # Keep a reference to avoid garbage collection
 
