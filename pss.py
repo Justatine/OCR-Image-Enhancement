@@ -133,49 +133,32 @@ def load_image():
     file_path = filedialog.askopenfilename()
     if file_path:
         img = cv2.imread(file_path)
-
-        # Show original image
+        
+        # Show original image first
         show_image_with_matplotlib(img, "Original Image")
-
-        # Allow user to select a region of interest (ROI) for cropping
-        r = cv2.selectROI("Select Region to Crop", img, fromCenter=False, showCrosshair=True)
-        if r != (0, 0, 0, 0):
-            # Get coordinates of the selected ROI without resizing or zooming in
-            x, y, w, h = map(int, r)
-
-            # Create a mask to focus only on the selected region
-            mask = np.zeros_like(img)
-            mask[y:y+h, x:x+w] = img[y:y+h, x:x+w]
-            img = mask  # Update `img` with the masked version to keep original size
-
-            cv2.destroyWindow("Select Region to Crop")
-            show_image_with_matplotlib(img, "Cropped Area with Original Size")
-
-        # Convert to grayscale for further processing
+        
+        # Convert to grayscale before contour detection and warp transformation
         gray_image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-        cropped_image = contour_detection(gray_image)
-
+        cropped_image = contour_detection(gray_image)  
+        
         preprocessed_image = gaussian_blur(cropped_image)
         binary_image = otsu_binarization(preprocessed_image)
-
+        
         show_image_with_matplotlib(binary_image, "Preprocessed Image (Gaussian Blur + Otsu Binarization)")
-
+        
         segmented_image = line_and_word_segmentation(binary_image)
         segmented_path = os.path.join('Results', 'segmented_image.png')
         cv2.imwrite(segmented_path, segmented_image)
         show_image_with_matplotlib(segmented_image, "Final Segmentation with Bounding Boxes")
 
-        # Perform OCR with layout preservation
-        extracted_text = pytesseract.image_to_string(binary_image, config="--psm 6")
-
-        # Display the extracted text
-        extracted_text_box.delete(1.0, END)
-        extracted_text_box.insert(END, extracted_text)
-        
-        # Calculate and display average confidence score (optional)
         ocr_data = pytesseract.image_to_data(binary_image, output_type=Output.DICT)
+        
         confidences = [int(conf) for conf in ocr_data['conf'] if int(conf) != -1]
         average_confidence = sum(confidences) / len(confidences) if confidences else 0
+        extracted_text = "\n".join(ocr_data['text'])
+
+        extracted_text_box.delete(1.0, END)
+        extracted_text_box.insert(END, extracted_text)
         confidence_label.config(text=f"Average Confidence Score: {average_confidence:.2f}%")
 
 root.geometry("800x600")

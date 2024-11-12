@@ -8,34 +8,46 @@ import numpy as np
 root = tk.Tk()
 root.title("Image Upload and Display")
 
-# Function for Otsu Binarization
-def otsu_binarization(image):
-    # Convert the image to grayscale
-    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    
-    # Apply Otsu's thresholding
-    _, otsu_img = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    
-    return otsu_img
+# Function to apply brightness and contrast adjustments
+def apply_brightness_contrast(input_img, brightness=0, contrast=0):
+    if brightness != 0:
+        shadow = max(brightness, 0)
+        highlight = 255 if brightness > 0 else 255 + brightness
+        alpha_b = (highlight - shadow) / 255
+        gamma_b = shadow
+        buf = cv2.addWeighted(input_img, alpha_b, input_img, 0, gamma_b)
+    else:
+        buf = input_img.copy()
 
-# Function to open file dialog and upload an image
+    if contrast != 0:
+        f = 131 * (contrast + 127) / (127 * (131 - contrast))
+        alpha_c = f
+        gamma_c = 127 * (1 - f)
+        buf = cv2.addWeighted(buf, alpha_c, buf, 0, gamma_c)
+
+    return buf
+
+# Function to open file dialog, adjust brightness/contrast, and display the image
 def upload_image():
     file_path = filedialog.askopenfilename(title="Select an Image", filetypes=[("Image files", "*.jpg;*.jpeg;*.png;*.bmp;*.gif")])
     if file_path:
-        # Open the image using OpenCV
-        img = cv2.imread(file_path)
+        # Read the image with OpenCV
+        img_cv = cv2.imread(file_path)
         
-        # Apply Otsu binarization
-        otsu_img = otsu_binarization(img)
+        # Resize the image (optional)
+        img_cv = cv2.resize(img_cv, (400, 400), interpolation=cv2.INTER_AREA)
+
+        # Apply brightness and contrast adjustment
+        img_cv = apply_brightness_contrast(img_cv, brightness=0, contrast=64)  # Adjust brightness and contrast as needed
         
-        # Convert the image to PIL format for display in tkinter
-        otsu_img_pil = Image.fromarray(otsu_img)
+        # Convert the color format from BGR to RGB for PIL compatibility
+        img_rgb = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
         
-        # Resize the image to fit in the label
-        otsu_img_pil.thumbnail((400, 400))
+        # Convert to PIL format
+        img_pil = Image.fromarray(img_rgb)
         
-        # Convert the image to a format that tkinter can display
-        img_tk = ImageTk.PhotoImage(otsu_img_pil)
+        # Convert to a format Tkinter can display
+        img_tk = ImageTk.PhotoImage(img_pil)
         
         # Display the image
         label.config(image=img_tk)
