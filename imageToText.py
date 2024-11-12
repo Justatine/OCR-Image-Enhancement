@@ -117,7 +117,6 @@ class ImageToTextApp:
             int(self.end_y * (self.original_image.height / self.image_thumbnail.height)),
         )
 
-
     def remove_background(self, image_path):
         # Read the image using OpenCV
         
@@ -164,14 +163,16 @@ class ImageToTextApp:
             # Apply Otsu's binarization
             gray = cv2.cvtColor(contrast, cv2.COLOR_BGR2GRAY)
             _, binarized_image = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            kernel = cv2.getStructuringElement(cv2.MORPH_RECT, (4,8))
+            morph_img = cv2.morphologyEx(gray, cv2.MORPH_CLOSE, kernel)
             
             # Save binarized image
             os.makedirs("otsu_binarization", exist_ok=True)
             binarized_path = os.path.join("otsu_binarization", "binarized_image.png")
-            cv2.imwrite(binarized_path, binarized_image)
+            cv2.imwrite(binarized_path, morph_img)
 
             # Skew correction
-            coords = np.column_stack(np.where(binarized_image > 0))
+            coords = np.column_stack(np.where(morph_img > 0))
             angle = cv2.minAreaRect(coords)[-1]
             if angle < -45:
                 angle = -(90 + angle)
