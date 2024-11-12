@@ -1,65 +1,51 @@
 import tkinter as tk
-from tkinter import filedialog
-from PIL import Image, ImageTk
-import cv2
-import numpy as np
+
+# Function to count incorrect words
+def count_incorrect_words(extracted_words, reference_words):
+    # Ensure both arrays are of the same length for comparison
+    min_length = min(len(extracted_words), len(reference_words))
+    incorrect_count = 0
+    
+    # Compare each word in the two arrays
+    for i in range(min_length):
+        if extracted_words[i] != reference_words[i]:
+            incorrect_count += 1
+    
+    # If the arrays have different lengths, count all extra words in the longer array as incorrect
+    incorrect_count += abs(len(extracted_words) - len(reference_words))
+    
+    return incorrect_count
+
+# Function to handle the word count and comparison
+def compare_words():
+    # Extract the text input from the textbox (treated as reference)
+    reference_text = text_box.get("1.0", tk.END).strip()  # Get reference text
+    reference_words = reference_text.split()  # Split the reference text into words
+    
+    # Example extracted words (could be input elsewhere in your app)
+    extracted_words = ["The", "quick", "brown", "fox", "jump", "over", "the", "lazy", "dog"]
+    
+    # Count incorrect words by comparing the extracted and reference words
+    incorrect_count = count_incorrect_words(extracted_words, reference_words)
+    
+    # Display the result
+    result_label.config(text=f"Incorrect Words: {incorrect_count}")  # Show number of incorrect words
 
 # Create the main window
 root = tk.Tk()
-root.title("Image Upload and Display")
+root.title("Word Comparison")
 
-# Function to apply brightness and contrast adjustments
-def apply_brightness_contrast(input_img, brightness=0, contrast=0):
-    if brightness != 0:
-        shadow = max(brightness, 0)
-        highlight = 255 if brightness > 0 else 255 + brightness
-        alpha_b = (highlight - shadow) / 255
-        gamma_b = shadow
-        buf = cv2.addWeighted(input_img, alpha_b, input_img, 0, gamma_b)
-    else:
-        buf = input_img.copy()
+# Create a textbox for input (reference words)
+text_box = tk.Text(root, wrap="word", width=50, height=10)
+text_box.pack(pady=10)
 
-    if contrast != 0:
-        f = 131 * (contrast + 127) / (127 * (131 - contrast))
-        alpha_c = f
-        gamma_c = 127 * (1 - f)
-        buf = cv2.addWeighted(buf, alpha_c, buf, 0, gamma_c)
+# Create a button to compare words
+compare_button = tk.Button(root, text="Compare Words", command=compare_words)
+compare_button.pack(pady=5)
 
-    return buf
-
-# Function to open file dialog, adjust brightness/contrast, and display the image
-def upload_image():
-    file_path = filedialog.askopenfilename(title="Select an Image", filetypes=[("Image files", "*.jpg;*.jpeg;*.png;*.bmp;*.gif")])
-    if file_path:
-        # Read the image with OpenCV
-        img_cv = cv2.imread(file_path)
-        
-        # Resize the image (optional)
-        img_cv = cv2.resize(img_cv, (400, 400), interpolation=cv2.INTER_AREA)
-
-        # Apply brightness and contrast adjustment
-        img_cv = apply_brightness_contrast(img_cv, brightness=0, contrast=64)  # Adjust brightness and contrast as needed
-        
-        # Convert the color format from BGR to RGB for PIL compatibility
-        img_rgb = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
-        
-        # Convert to PIL format
-        img_pil = Image.fromarray(img_rgb)
-        
-        # Convert to a format Tkinter can display
-        img_tk = ImageTk.PhotoImage(img_pil)
-        
-        # Display the image
-        label.config(image=img_tk)
-        label.image = img_tk  # Keep a reference to avoid garbage collection
-
-# Create an upload button
-upload_button = tk.Button(root, text="Upload Image", command=upload_image)
-upload_button.pack(pady=10)
-
-# Create a label to display the uploaded image
-label = tk.Label(root)
-label.pack(pady=10)
+# Label to display the result
+result_label = tk.Label(root, text="Incorrect Words: 0")
+result_label.pack(pady=10)
 
 # Run the application
 root.mainloop()
