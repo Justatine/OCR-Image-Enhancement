@@ -8,15 +8,28 @@ import numpy as np
 root = tk.Tk()
 root.title("Image Upload and Display")
 
-# Function for Otsu Binarization
-def otsu_binarization(image):
+# Function to remove lines from the image using morphological operations
+def remove_lines_from_image(image):
     # Convert the image to grayscale
     gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
     
-    # Apply Otsu's thresholding
-    _, otsu_img = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+    # Apply a binary threshold to get a binary image
+    _, thresh = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
     
-    return otsu_img
+    # Define a kernel for morphological transformations
+    kernel = np.ones((3, 3), np.uint8)
+    
+    # Perform morphological closing (to remove small holes in the foreground)
+    morph_img = cv2.morphologyEx(thresh, cv2.MORPH_CLOSE, kernel)
+    
+    # Perform morphological opening (to remove lines and small noise)
+    morph_img = cv2.morphologyEx(morph_img, cv2.MORPH_OPEN, kernel)
+    
+    # Invert the image back to get the result
+    final_result = cv2.bitwise_not(morph_img)
+    
+    # Return the processed image
+    return final_result
 
 # Function to open file dialog and upload an image
 def upload_image():
@@ -25,17 +38,17 @@ def upload_image():
         # Open the image using OpenCV
         img = cv2.imread(file_path)
         
-        # Apply Otsu binarization
-        otsu_img = otsu_binarization(img)
+        # Apply the remove_lines_from_image function
+        img_no_lines = remove_lines_from_image(img)
         
-        # Convert the image to PIL format for display in tkinter
-        otsu_img_pil = Image.fromarray(otsu_img)
+        # Convert the processed image to PIL format for display in tkinter
+        img_no_lines_pil = Image.fromarray(cv2.cvtColor(img_no_lines, cv2.COLOR_BGR2RGB))
         
         # Resize the image to fit in the label
-        otsu_img_pil.thumbnail((400, 400))
+        img_no_lines_pil.thumbnail((400, 400))
         
         # Convert the image to a format that tkinter can display
-        img_tk = ImageTk.PhotoImage(otsu_img_pil)
+        img_tk = ImageTk.PhotoImage(img_no_lines_pil)
         
         # Display the image
         label.config(image=img_tk)
