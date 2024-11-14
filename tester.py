@@ -1,189 +1,259 @@
-import easyocr
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from PIL import Image, ImageTk, ImageDraw
+import pytesseract as tess
 import cv2
 import numpy as np
-import matplotlib.pyplot as plt
-from tkinter import filedialog, Label, Button, Tk, Text, END
 import os
-import warnings
-import logging
+from imutils.perspective import four_point_transform
 
-# Suppress specific warnings from EasyOCR and PyTorch
-warnings.filterwarnings("ignore", category=FutureWarning)
-logging.getLogger("torch").setLevel(logging.ERROR)
+# Configure Tesseract path
+tess.pytesseract.tesseract_cmd = r"C:\Users\Jan Kenneth\Downloads\Tesseract-OCR-20241111T125308Z-001\Tesseract-OCR\tesseract.exe"
 
-# Initialize EasyOCR reader
-reader = easyocr.Reader(['en'])
-
-# Initialize GUI
-root = Tk()
-root.title("Image to Text Extraction using OCR")
-
-def show_image_with_matplotlib(img, title, figsize=(10, 10)):
-    plt.figure(figsize=figsize)
-    if len(img.shape) == 2: 
-        plt.imshow(img, cmap='gray')
+def apply_brightness_contrast(img, brightness=0, contrast=0):
+    if brightness != 0:
+        shadow = max(brightness, 0)
+        highlight = 255 if brightness > 0 else 255 + brightness
+        alpha_b = (highlight - shadow) / 255
+        buf = cv2.addWeighted(img, alpha_b, img, 0, shadow)
     else:
-        plt.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-    plt.title(title)
-    plt.axis('off')
-    plt.show()
+        buf = img.copy()
 
-def contour_detection(image):
-    gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    height, width = gray_image.shape[:2]
-    blur_ksize = (5, 5) if min(height, width) < 1000 else (7, 7)
-    blurred = cv2.GaussianBlur(gray_image, blur_ksize, 0)
-    median_intensity = np.median(blurred)
-    lower_threshold = int(max(0, 0.66 * median_intensity))
-    upper_threshold = int(min(255, 1.33 * median_intensity))
-    edged = cv2.Canny(blurred, lower_threshold, upper_threshold)
-    contours, _ = cv2.findContours(edged, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    contours = sorted(contours, key=cv2.contourArea, reverse=True)[:10]
-    document_contour = None
-    for contour in contours:
-        perimeter = cv2.arcLength(contour, True)
-        tolerance = 0.02 * perimeter if min(height, width) < 1000 else 0.015 * perimeter
-        approx = cv2.approxPolyDP(contour, tolerance, True)
-        if len(approx) == 4 and cv2.contourArea(approx) > (height * width * 0.05):
-            document_contour = approx
-            break
-    if document_contour is not None:
-        pts = document_contour.reshape(4, 2)
-        rect = np.zeros((4, 2), dtype="float32")
-        s = pts.sum(axis=1)
-        rect[0] = pts[np.argmin(s)]
-        rect[2] = pts[np.argmax(s)]
-        diff = np.diff(pts, axis=1)
-        rect[1] = pts[np.argmin(diff)]
-        rect[3] = pts[np.argmax(diff)]
-        (top_left, top_right, bottom_right, bottom_left) = rect
-        width_a = np.linalg.norm(bottom_right - bottom_left)
-        width_b = np.linalg.norm(top_right - top_left)
-        max_width = max(int(width_a), int(width_b))
-        height_a = np.linalg.norm(top_right - bottom_right)
-        height_b = np.linalg.norm(top_left - bottom_left)
-        max_height = max(int(height_a), int(height_b))
-        dst = np.array([
-            [0, 0],
-            [max_width - 1, 0],
-            [max_width - 1, max_height - 1],
-            [0, max_height - 1]
-        ], dtype="float32")
-        M = cv2.getPerspectiveTransform(rect, dst)
-        cropped_image = cv2.warpPerspective(image, M, (max_width, max_height))
-        return cropped_image
-    else:
+    if contrast != 0:
+        f = 131 * (contrast + 127) / (127 * (131 - contrast))
+        alpha_c = f
+        gamma_c = 127 * (1 - f)
+        buf = cv2.addWeighted(buf, alpha_c, buf, 0, gamma_c)
+
+    return buf
+
+def setExtractedWord(word):
+    global extracted_word
+    extracted_word = word
+
+def getExtractedWord():
+    return extracted_word
+
+def setNumberofRefWords(num):
+    global refwords
+    refwords = num
+
+def getNumberofRefWords():
+    return refwords
+
+class ImageToTextApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Image To Text Converter")
+        self.root.geometry("600x600")
+        
+        self.initUI()
+
+    def initUI(self):
+        self.select_button = tk.Button(self.root, text="Select Image", command=self.select_image)
+        self.select_button.pack(pady=10)
+        
+        self.image_label = tk.Label(self.root)
+        self.image_label.pack(pady=10)
+        
+        self.text_display = tk.Text(self.root, height=5, wrap=tk.WORD)
+        self.text_display.pack(pady=10)
+        
+        self.text_box = tk.Text(self.root, wrap="word", width=50, height=10)
+        self.text_box.pack(pady=10)
+        
+        compare_button = tk.Button(self.root, text="Compare Words", command=self.compare_words)
+        compare_button.pack(pady=5)
+        
+        self.result_label = tk.Label(self.root, text="Incorrect Words: 0")
+        self.result_label.pack(pady=10)
+        
+        self.accuracy_label = tk.Label(self.root, text="Accuracy: 0")
+        self.accuracy_label.pack(pady=12)
+
+    # Function to count incorrect words (Make this static)
+    @staticmethod
+    def count_incorrect_words(extracted_words, reference_words):
+        # Ensure both arrays are of the same length for comparison
+        min_length = min(len(extracted_words), len(reference_words))
+        incorrect_count = 0
+        
+        # Compare each word in the two arrays
+        for i in range(min_length):
+            if extracted_words[i] != reference_words[i]:
+                incorrect_count += 1
+        
+        # If the arrays have different lengths, count all extra words in the longer array as incorrect
+        incorrect_count += abs(len(extracted_words) - len(reference_words))
+        
+        return incorrect_count
+
+    # Function to handle the word count and comparison
+    def compare_words(self):
+        # Extract the text input from the textbox (treated as reference)
+        reference_text = self.text_box.get("1.0", tk.END).strip()  # Get reference text
+        reference_words = reference_text.split()  # Split the reference text into words
+        
+        # print(f"Number of words: {len(reference_words)}")
+        setNumberofRefWords(len(reference_words))
+
+        # Initialize an empty list to store the words
+        ex_words = []
+
+        # Get the extracted text
+        extracted_words = getExtractedWord()
+
+        # Check if there's a valid extracted string (not empty)
+        if extracted_words:
+            # Clean the extracted words by removing any newline characters
+            cleaned_words = extracted_words.replace('\n', ' ')  # Replace newlines with spaces
+
+            # Split the cleaned text into individual words based on spaces
+            words_list = cleaned_words.split()
+
+            # Add each word to the ex_words list
+            ex_words.extend(words_list)
+
+            # Output the result
+            print(ex_words)
+
+        # Count incorrect words by comparing the extracted and reference words
+        incorrect_count = self.count_incorrect_words(ex_words, reference_words)
+        total =  getNumberofRefWords();
+        accuracyValue1 = (incorrect_count / total) * 100;
+        accuracyValue2 = 100 - accuracyValue1
+        # Display the result
+        self.result_label.config(text=f"Incorrect Words: {incorrect_count}")  # Show number of incorrect words
+        self.accuracy_label.config(text=f"Accuracy: {accuracyValue2:.2f}%")  # Show accuracy with 2 decimal places
+
+    def select_image(self):
+        file_path = filedialog.askopenfilename(
+            filetypes=[("Image files", "*.jpg *.jpeg *.png *.bmp *.tiff *.tif")]
+        )
+        if not file_path:
+            return
+
+        self.original_image = Image.open(file_path)
+        self.image_thumbnail = self.original_image.copy()
+        self.image_thumbnail.thumbnail((400, 400))
+        
+        img_tk = ImageTk.PhotoImage(self.image_thumbnail)
+        self.image_label.config(image=img_tk)
+        self.image_label.image = img_tk
+        
+        self.open_crop_window()
+
+    def open_crop_window(self):
+        self.crop_window = tk.Toplevel(self.root)
+        self.crop_window.title("Select Area to Convert to Text")
+        
+        self.canvas = tk.Canvas(self.crop_window, width=self.image_thumbnail.width, height=self.image_thumbnail.height)
+        self.canvas.pack()
+        
+        self.image_tk = ImageTk.PhotoImage(self.image_thumbnail)
+        self.canvas.create_image(0, 0, anchor=tk.NW, image=self.image_tk)
+        
+        self.canvas.bind("<ButtonPress-1>", self.on_button_press)
+        self.canvas.bind("<B1-Motion>", self.on_mouse_drag)
+        self.canvas.bind("<ButtonRelease-1>", self.on_button_release)
+        
+        read_button = tk.Button(self.crop_window, text="Read", command=self.read_selected_area)
+        read_button.pack(pady=10)
+    
+    def on_button_press(self, event):
+        self.start_x, self.start_y = event.x, event.y
+        if hasattr(self, 'rect') and self.rect:
+            self.canvas.delete(self.rect)
+
+    def on_mouse_drag(self, event):
+        if hasattr(self, 'rect') and self.rect:
+            self.canvas.delete(self.rect)
+        self.rect = self.canvas.create_rectangle(self.start_x, self.start_y, event.x, event.y, outline="red")
+
+    def on_button_release(self, event):
+        self.end_x, self.end_y = event.x, event.y
+        self.crop_box = (
+            int(self.start_x * (self.original_image.width / self.image_thumbnail.width)),
+            int(self.start_y * (self.original_image.height / self.image_thumbnail.height)),
+            int(self.end_x * (self.original_image.width / self.image_thumbnail.width)),
+            int(self.end_y * (self.original_image.height / self.image_thumbnail.height)),
+        )
+
+    def remove_background(self, image_path):
+        # Read the image using OpenCV
+        
+        img = cv2.imread(image_path)
+        
+           # Convert the image to grayscale for contour detection
+        gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+          # Apply binary thresholding to the grayscale image
+        _, thresh = cv2.threshold(gray, 1, 255, cv2.THRESH_BINARY)
+
+          # Find contours in the thresholded image
+        cnts, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+          # Create a mask for the image, initializing it to zero (black)
+        mask = np.zeros(img.shape, dtype=np.uint8)
+
+          # Fill the contours with white color (255)
+        cv2.fillPoly(mask, cnts, (255, 255, 255))
+
+          # Invert the mask to get the background (black)
+        mask = 255 - mask
+
+          # Use bitwise OR to combine the mask with the original image
+        result = cv2.bitwise_or(img, mask)
+
+          # Optionally, convert the result to RGB format (if needed for PIL or display)
+        img_rgb_result = cv2.cvtColor(result, cv2.COLOR_BGR2RGB)
+
+        return img_rgb_result
+
+    
+    def read_selected_area(self):
+        try:
+            cropped_image = self.original_image.crop(self.crop_box)
+            cropped_cv_image = cv2.cvtColor(np.array(cropped_image), cv2.COLOR_RGB2BGR)
+            contrast_image = apply_brightness_contrast(cropped_cv_image, contrast=64)
+            gray = cv2.cvtColor(contrast_image, cv2.COLOR_BGR2GRAY)
+            _, binarized_image = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            corrected_image = self.apply_contour(binarized_image)
+            
+            extracted_text = tess.image_to_string(corrected_image)
+            self.text_display.delete("1.0", tk.END)
+            self.text_display.insert(tk.END, extracted_text)
+
+            self.crop_window.destroy()
+            messagebox.showinfo("Success", "Text extraction completed.")
+        except Exception as e:
+            messagebox.showerror("Error", f"Could not process selected area:\n{e}")
+    def apply_contour(self, image):
+        cnts = cv2.findContours(image, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[0]
+        cnts = sorted(cnts, key=cv2.contourArea, reverse=True)[:5]
+
+        for c in cnts:
+            peri = cv2.arcLength(c, True)
+            approx = cv2.approxPolyDP(c, 0.02 * peri, True)
+            if len(approx) == 4:
+                return four_point_transform(image, approx.reshape(4, 2))
         return image
 
-def gaussian_blur(image, kernel_size=5, sigma=1.0):
-    ax = np.linspace(-(kernel_size // 2), kernel_size // 2, kernel_size)
-    gauss = np.exp(-0.5 * np.square(ax) / np.square(sigma))
-    kernel = np.outer(gauss, gauss)
-    kernel /= kernel.sum()
-    blurred_image = cv2.filter2D(image, -1, kernel)
-    return blurred_image, kernel
-
-def otsu_binarization(image):
-    if len(image.shape) == 3:
-        gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-    else:
-        gray_image = image
-    histogram, bin_edges = np.histogram(gray_image, bins=256, range=(0, 256))
-    histogram = histogram / histogram.sum()
-    cumulative_sum = np.cumsum(histogram)
-    cumulative_mean = np.cumsum(histogram * np.arange(256))
-    total_mean = cumulative_mean[-1]
-    mask = (cumulative_sum * (1 - cumulative_sum)) > 0
-    between_class_variance = np.zeros(256)
-    between_class_variance[mask] = (total_mean * cumulative_sum[mask] - cumulative_mean[mask]) ** 2 / (cumulative_sum[mask] * (1 - cumulative_sum[mask]))
-    optimal_threshold = np.argmax(between_class_variance)
-    print(f"Optimal threshold: {optimal_threshold}")
-    binary_image = (gray_image >= optimal_threshold) * 255
-    return binary_image.astype(np.uint8)
-
-def load_image():
-    global extracted_text
-    if not os.path.exists('Results'):
-        os.makedirs('Results')
-    file_path = filedialog.askopenfilename()
-    if file_path:
-        img = cv2.imread(file_path)
-        cropped_image = contour_detection(img)
-        show_image_with_matplotlib(cropped_image, "Cropped Image with Document Contour Detected")
-        gray_image = cv2.cvtColor(cropped_image, cv2.COLOR_BGR2GRAY)
-        blurred_image, kernel = gaussian_blur(gray_image)
-        binary_image = otsu_binarization(blurred_image)
-        combined_path = os.path.join('Results', 'gaussian_otsu_binarization.png')
-        cv2.imwrite(combined_path, binary_image)
-        show_image_with_matplotlib(binary_image, "Preprocessed Image (Gaussian Blur + Otsu Binarization)")
-
-        # Pass the preprocessed image to EasyOCR for OCR
-        result = reader.readtext(binary_image, detail=0, paragraph=True)
-        extracted_text = "\n".join(result)
-        extracted_text_box.delete(1.0, END)
-        extracted_text_box.insert(END, extracted_text)
-
-def calculate_word_error_rate(extracted_text, reference_text):
-    # Split both texts into words
-    extracted_words = extracted_text.split()
-    reference_words = reference_text.split()
-
-    # Count the number of incorrect words
-    incorrect_words = sum(1 for ew, rw in zip(extracted_words, reference_words) if ew != rw)
-    incorrect_words += abs(len(extracted_words) - len(reference_words))
-
-    # Total words in the reference text
-    total_words = max(len(reference_words), 1)  # Avoid division by zero
-
-    # WER Calculation
-    wer = (incorrect_words / total_words) * 100
-    accuracy = 100 - wer  # Accuracy based on WER
-    return accuracy
-
-def calculate_character_error_rate(extracted_text, reference_text):
-    # Calculate the number of incorrect characters
-    incorrect_chars = sum(1 for ec, rc in zip(extracted_text, reference_text) if ec != rc)
-    incorrect_chars += abs(len(extracted_text) - len(reference_text))
-
-    # Total characters in the reference text
-    total_chars = max(len(reference_text), 1)  # Avoid division by zero
-
-    # CER Calculation
-    cer = (incorrect_chars / total_chars) * 100
-    accuracy = 100 - cer  # Accuracy based on CER
-    return accuracy
-
-def calculate_accuracy():
-    extracted_text = extracted_text_box.get(1.0, END).strip()
-    reference_text = reference_text_box.get(1.0, END).strip()
-    
-    # Calculate WER-based accuracy
-    wer_accuracy = calculate_word_error_rate(extracted_text, reference_text)
-    accuracy_label.config(text=f"OCR Accuracy (WER): {wer_accuracy:.2f}%")
-
-    # Calculate CER-based accuracy
-    cer_accuracy = calculate_character_error_rate(extracted_text, reference_text)
-    cer_label.config(text=f"OCR Accuracy (CER): {cer_accuracy:.2f}%")
-
-root.geometry("800x600")
-
-# GUI Elements
-load_button = Button(root, text="Load Image", command=load_image)
-load_button.pack()
-extracted_text_label = Label(root, text="Extracted Text:")
-extracted_text_label.pack()
-extracted_text_box = Text(root, height=10, width=50)
-extracted_text_box.pack()
-reference_text_label = Label(root, text="Reference Text:")
-reference_text_label.pack()
-reference_text_box = Text(root, height=10, width=50)
-reference_text_box.pack()
-accuracy_button = Button(root, text="Calculate Accuracy", command=calculate_accuracy)
-accuracy_button.pack()
-accuracy_label = Label(root, text="OCR Accuracy (WER): N/A")
-accuracy_label.pack()
-cer_label = Label(root, text="OCR Accuracy (CER): N/A")
-cer_label.pack()
-
-# Run the GUI
+    def compare_words(self):
+        reference_text = self.text_box.get("1.0", tk.END).strip()
+        reference_words = reference_text.split()
+        
+        extracted_text = self.text_display.get("1.0", tk.END).strip()
+        extracted_words = extracted_text.split()
+        
+        incorrect_count = sum(1 for r, e in zip(reference_words, extracted_words) if r != e)
+        incorrect_count += abs(len(reference_words) - len(extracted_words))
+        
+        accuracy = max(0, (len(reference_words) - incorrect_count) / len(reference_words) * 100)
+        
+        self.result_label.config(text=f"Incorrect Words: {incorrect_count}")
+        self.accuracy_label.config(text=f"Accuracy: {accuracy:.2f}%")
+# Run the app
+root = tk.Tk()
+app = ImageToTextApp(root)
 root.mainloop()
