@@ -155,13 +155,31 @@ class ImageToTextApp:
             return
 
         self.original_image = Image.open(file_path)
+
+        # Check for EXIF data and correct orientation if necessary
+        try:
+            exif = self.original_image._getexif()
+            if exif is not None:
+                for tag, value in exif.items():
+                    if tag == 274:  # Orientation tag
+                        if value == 3:
+                            self.original_image = self.original_image.rotate(180, expand=True)
+                        elif value == 6:
+                            self.original_image = self.original_image.rotate(270, expand=True)
+                        elif value == 8:
+                            self.original_image = self.original_image.rotate(90, expand=True)
+        except (AttributeError, KeyError, IndexError):
+            # No EXIF data or no orientation tag, so continue without modifying
+            pass
+
+        # Create the thumbnail without changing the aspect ratio
         self.image_thumbnail = self.original_image.copy()
         self.image_thumbnail.thumbnail((400, 400))
-        
+
         img_tk = ImageTk.PhotoImage(self.image_thumbnail)
         self.image_label.config(image=img_tk)
         self.image_label.image = img_tk
-        
+
         self.open_crop_window()
 
     def open_crop_window(self):
