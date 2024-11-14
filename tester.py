@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 import os
 from imutils.perspective import four_point_transform
+import imutils
 
 # Configure Tesseract path
 tess.pytesseract.tesseract_cmd = r"C:\Users\Jan Kenneth\Downloads\Tesseract-OCR-20241111T125308Z-001\Tesseract-OCR\tesseract.exe"
@@ -40,6 +41,26 @@ def setNumberofRefWords(num):
 
 def getNumberofRefWords():
     return refwords
+
+def save_img(image, output_folder, output_filename):
+    # Create the output folder if it doesn't exist
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
+    
+    # Check if the file exists and append a number if it does
+    base_filename, file_extension = os.path.splitext(output_filename)
+    output_image_path = os.path.join(output_folder, output_filename)
+    
+    # Add a number suffix to the filename if the file exists
+    counter = 1
+    while os.path.exists(output_image_path):
+        # Construct a new filename with a counter
+        output_image_path = os.path.join(output_folder, f"{base_filename}_{counter}{file_extension}")
+        counter += 1
+    
+    # Save the image to the output path
+    cv2.imwrite(output_image_path, image)
+    print(f"Image saved to: {output_image_path}")
 
 class ImageToTextApp:
     def __init__(self, root):
@@ -210,44 +231,39 @@ class ImageToTextApp:
 
         return img_rgb_result
 
-    
     def read_selected_area(self):
         try:
             cropped_image = self.original_image.crop(self.crop_box)
-
             cropped_cv_image = cv2.cvtColor(np.array(cropped_image), cv2.COLOR_RGB2BGR)
 
+            # CONTRAST
+            # ==================================================
             contrast_image = apply_brightness_contrast(cropped_cv_image, contrast=64)
-
-            output_folder = 'contrast_adjustment'
-            if not os.path.exists(output_folder):
-                os.makedirs(output_folder)
-
-            # Save the contrast_image to the contrast_adjustment folder
-            output_image_path = os.path.join(output_folder, 'contrast_image.png')
-            cv2.imwrite(output_image_path, contrast_image)
+            save_img(contrast_image, 'contrast_adjustment', 'contrast_image.png')
 
             # OTSU
-            gray = cv2.cvtColor(contrast_image, cv2.COLOR_BGR2GRAY)
-            _, binarized_image = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-            output_folder = 'otsu_binarization'
-            if not os.path.exists(output_folder):
-                os.makedirs(output_folder)
-
-            # Save the contrast_image to the contrast_adjustment folder
-            output_image_path = os.path.join(output_folder, 'otsu.png')
-            cv2.imwrite(output_image_path, contrast_image)
+            image = cv2.cvtColor(contrast_image, cv2.COLOR_BGR2GRAY)
+            image = cv2.GaussianBlur(image, (5, 5), 0)
+            bins_num = 256
+            hist, bin_edges = np.histogram(image, bins=bins_num)
+            hist = np.divide(hist.ravel(), hist.max())
+            bin_mids = (bin_edges[:-1] + bin_edges[1:]) / 2.
+            weight1 = np.cumsum(hist)
+            weight2 = np.cumsum(hist[::-1])[::-1]
+            mean1 = np.cumsum(hist * bin_mids) / weight1
+            mean2 = (np.cumsum((hist * bin_mids)[::-1]) / weight2[::-1])[::-1]
+            inter_class_variance = weight1[:-1] * weight2[1:] * (mean1[:-1] - mean2[1:]) ** 2
+            index_of_max_val = np.argmax(inter_class_variance)
+            threshold = bin_mids[:-1][index_of_max_val]
+            print("Otsu's algorithm implementation thresholding result: ", threshold)
+            _, binarized_image = cv2.threshold(image, threshold, 255, cv2.THRESH_BINARY)
+            save_img(binarized_image, 'otsu_binarization', 'otsu_binarization.png')
 
             # CONTOUR
+            # ==================================================
             corrected_image = self.apply_contour(binarized_image)
-            output_folder = 'contour'
-            if not os.path.exists(output_folder):
-                os.makedirs(output_folder)
+            save_img(corrected_image, 'contour', 'contour.png')
 
-            # Save the contrast_image to the contrast_adjustment folder
-            output_image_path = os.path.join(output_folder, 'contour.png')
-            cv2.imwrite(output_image_path, contrast_image)
-            
             extracted_text = tess.image_to_string(corrected_image)
             self.text_display.delete("1.0", tk.END)
             self.text_display.insert(tk.END, extracted_text)
