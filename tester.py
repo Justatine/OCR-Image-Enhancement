@@ -214,11 +214,39 @@ class ImageToTextApp:
     def read_selected_area(self):
         try:
             cropped_image = self.original_image.crop(self.crop_box)
+
             cropped_cv_image = cv2.cvtColor(np.array(cropped_image), cv2.COLOR_RGB2BGR)
+
             contrast_image = apply_brightness_contrast(cropped_cv_image, contrast=64)
+
+            output_folder = 'contrast_adjustment'
+            if not os.path.exists(output_folder):
+                os.makedirs(output_folder)
+
+            # Save the contrast_image to the contrast_adjustment folder
+            output_image_path = os.path.join(output_folder, 'contrast_image.png')
+            cv2.imwrite(output_image_path, contrast_image)
+
+            # OTSU
             gray = cv2.cvtColor(contrast_image, cv2.COLOR_BGR2GRAY)
             _, binarized_image = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+            output_folder = 'otsu_binarization'
+            if not os.path.exists(output_folder):
+                os.makedirs(output_folder)
+
+            # Save the contrast_image to the contrast_adjustment folder
+            output_image_path = os.path.join(output_folder, 'otsu.png')
+            cv2.imwrite(output_image_path, contrast_image)
+
+            # CONTOUR
             corrected_image = self.apply_contour(binarized_image)
+            output_folder = 'contour'
+            if not os.path.exists(output_folder):
+                os.makedirs(output_folder)
+
+            # Save the contrast_image to the contrast_adjustment folder
+            output_image_path = os.path.join(output_folder, 'contour.png')
+            cv2.imwrite(output_image_path, contrast_image)
             
             extracted_text = tess.image_to_string(corrected_image)
             self.text_display.delete("1.0", tk.END)
@@ -228,6 +256,7 @@ class ImageToTextApp:
             messagebox.showinfo("Success", "Text extraction completed.")
         except Exception as e:
             messagebox.showerror("Error", f"Could not process selected area:\n{e}")
+
     def apply_contour(self, image):
         cnts = cv2.findContours(image, cv2.RETR_LIST, cv2.CHAIN_APPROX_SIMPLE)[0]
         cnts = sorted(cnts, key=cv2.contourArea, reverse=True)[:5]
